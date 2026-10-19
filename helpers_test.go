@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/ezh0v/socks5"
+	"github.com/KyberNetwork/socks5"
 )
 
 // openssl req -new -x509 -key server.key -out server.pem -addext "subjectAltName = IP:127.0.0.1"

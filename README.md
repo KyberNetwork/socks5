@@ -24,7 +24,7 @@ A fully featured implementation of the SOCKS 5 protocol in golang.
 
 ## Installation
 
-    go get github.com/ezh0v/socks5
+    go get github.com/KyberNetwork/socks5
 
 ## Getting Started
 
@@ -39,7 +39,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ezh0v/socks5"
+	"github.com/KyberNetwork/socks5"
 )
 
 func main() {

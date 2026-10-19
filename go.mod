@@ -1,4 +1,4 @@
-module github.com/ezh0v/socks5
+module github.com/KyberNetwork/socks5
 
 go 1.24.1
 
