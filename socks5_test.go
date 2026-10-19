@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/proxy"
 
-	"github.com/ezh0v/socks5"
+	"github.com/KyberNetwork/socks5"
 )
 
 func TestProxyConnect(t *testing.T) {
@@ -284,4 +284,141 @@ func TestProxyUDPAssociate(t *testing.T) {
 
 		assert.Equalf(t, packet, response, name)
 	}
+}
+
+// connectRequest returns a no-auth handshake followed by a CONNECT request to
+// the IPv4 address of l.
+func connectRequest(t *testing.T, l net.Listener) []byte {
+	t.Helper()
+
+	addr := l.Addr().(*net.TCPAddr)
+
+	return append([]byte{
+		0x05, 0x01, 0x00, // handshake: version 5, 1 method, no authentication required
+		0x05, 0x01, 0x00, 0x01, // request: version 5, connect, reserved, IPv4
+	}, append(addr.IP.To4(), byte(addr.Port>>8), byte(addr.Port))...)
+}
+
+// readConnectReply reads the method selection and the CONNECT reply (IPv4 bound address).
+func readConnectReply(t *testing.T, conn net.Conn) {
+	t.Helper()
+
+	reply := make([]byte, 2+10)
+	_, err := io.ReadFull(conn, reply)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x05, 0x00}, reply[:2])
+	require.Equal(t, byte(0x00), reply[3], "connect status")
+}
+
+func TestProxyConnectPropagatesTargetClose(t *testing.T) {
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { target.Close() })
+
+	go func() {
+		c, err := target.Accept()
+		if err != nil {
+			return
+		}
+		// The target answers and closes, like a server closing an idle keep-alive connection.
+		c.Write([]byte("bye"))
+		c.Close()
+	}()
+
+	go runProxy(
+		socks5.WithLogger(socks5.NopLogger),
+		socks5.WithPort(1161),
+	)
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", "127.0.0.1:1161")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	_, err = conn.Write(connectRequest(t, target))
+	require.NoError(t, err)
+
+	readConnectReply(t, conn)
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	data, err := io.ReadAll(conn)
+	require.NoError(t, err, "client must get EOF once the target closes")
+	assert.Equal(t, []byte("bye"), data)
+}
+
+func TestProxyConnectEarlyData(t *testing.T) {
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { target.Close() })
+
+	go func() {
+		c, err := target.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		io.Copy(c, c)
+	}()
+
+	go runProxy(
+		socks5.WithLogger(socks5.NopLogger),
+		socks5.WithPort(1162),
+	)
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", "127.0.0.1:1162")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	// Payload sent in the same write as the request, before the reply arrives.
+	_, err = conn.Write(append(connectRequest(t, target), []byte("early data")...))
+	require.NoError(t, err)
+
+	readConnectReply(t, conn)
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	echo := make([]byte, len("early data"))
+	_, err = io.ReadFull(conn, echo)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("early data"), echo)
+}
+
+func TestProxyConnectFragmentedRequest(t *testing.T) {
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { target.Close() })
+
+	go func() {
+		c, err := target.Accept()
+		if err != nil {
+			return
+		}
+		c.Close()
+	}()
+
+	go runProxy(
+		socks5.WithLogger(socks5.NopLogger),
+		socks5.WithPort(1163),
+	)
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", "127.0.0.1:1163")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	conn.(*net.TCPConn).SetNoDelay(true)
+
+	// Send the request one byte at a time so multi-byte fields arrive split.
+	for _, b := range connectRequest(t, target) {
+		_, err = conn.Write([]byte{b})
+		require.NoError(t, err)
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	readConnectReply(t, conn)
 }

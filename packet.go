@@ -3,6 +3,7 @@ package socks5
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net"
 )
 
@@ -25,7 +26,7 @@ func (p *packet) decode(data []byte) error {
 	buffer := bytes.NewBuffer(data)
 
 	// Reserved 2 bytes: 0x00, 0x00
-	if _, err := buffer.Read(make([]byte, 2)); err != nil {
+	if _, err := io.ReadFull(buffer, make([]byte, 2)); err != nil {
 		return errors.New("failed to read reserved bytes")
 	}
 
@@ -50,7 +51,7 @@ func (p *packet) decode(data []byte) error {
 	switch address.Type {
 	case addressTypeIPv4:
 		address.IP = make(net.IP, net.IPv4len)
-		if _, err := buffer.Read(address.IP); err != nil {
+		if _, err := io.ReadFull(buffer, address.IP); err != nil {
 			return errors.New("failed to read IPv4 address")
 		}
 	case addressTypeFQDN:
@@ -60,12 +61,12 @@ func (p *packet) decode(data []byte) error {
 		}
 
 		address.Domain = make([]byte, address.DomainLen)
-		if _, err := buffer.Read(address.Domain); err != nil {
+		if _, err := io.ReadFull(buffer, address.Domain); err != nil {
 			return errors.New("failed to read domain")
 		}
 	case addressTypeIPv6:
 		address.IP = make(net.IP, net.IPv6len)
-		if _, err := buffer.Read(address.IP); err != nil {
+		if _, err := io.ReadFull(buffer, address.IP); err != nil {
 			return errors.New("failed to read IPv6 address")
 		}
 	default:
@@ -74,7 +75,7 @@ func (p *packet) decode(data []byte) error {
 
 	address.Port = make([]byte, 2)
 
-	if _, err := buffer.Read(address.Port); err != nil {
+	if _, err := io.ReadFull(buffer, address.Port); err != nil {
 		return errors.New("failed to read port")
 	}
 

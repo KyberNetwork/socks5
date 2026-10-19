@@ -183,14 +183,25 @@ func (s *Server) connect(ctx context.Context, conn *connection, addr *address) {
 
 	var g errgroup.Group
 
+	// Relay the underlying connection rather than the *connection wrapper: it keeps
+	// CloseWrite (so the target's EOF reaches the client) and lets io.Copy splice
+	// TCP to TCP. Bytes already buffered by the handshake reader are sent first.
 	g.Go(func() error {
-		n, err := relay(target, conn)
-		s.metrics.UploadBytes(ctx, n)
+		buffered, err := conn.flushBuffered(target)
+		if err != nil {
+			s.metrics.UploadBytes(ctx, buffered)
+			// Unblock the download relay: the target is unusable.
+			target.Close()
+			return err
+		}
+
+		n, err := relay(target, conn.Conn)
+		s.metrics.UploadBytes(ctx, buffered+n)
 		return err
 	})
 
 	g.Go(func() error {
-		n, err := relay(conn, target)
+		n, err := relay(conn.Conn, target)
 		s.metrics.DownloadBytes(ctx, n)
 		return err
 	})
